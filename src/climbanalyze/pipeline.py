@@ -38,10 +38,11 @@ def run(video_path: str, config: AnalysisConfig, output_dir: str = "outputs") ->
     detector = YoloPoseDetector(config.poseModel, resolved_device)
     smoother = MovingAverageSmoother(config.smoothingWindow)
 
-    frames: list[PoseFrame] = []
+    frames: list[PoseFrame] = []           # smoothed — used for analysis
+    render_frames: list[PoseFrame] = []    # raw detection — used for annotation only
     coms: list[Optional[CenterOfMass]] = []
     all_metrics: list[FrameMetrics] = []
-    raw_images: list = []  # kept for annotation export
+    raw_images: list = []
 
     # --- Frame-by-frame processing ---
     for seq_idx, fd in enumerate(extract_frames(meta, config.targetFps)):
@@ -59,11 +60,17 @@ def run(video_path: str, config: AnalysisConfig, output_dir: str = "outputs") ->
         if not pose.keypoints or core_conf < config.frameConfidenceThreshold:
             pose.reliable = False
 
-        pose = smoother.smooth(pose)
-        com = compute_center_of_mass(pose, config.keypointConfidenceThreshold)
-        metrics = compute_frame_metrics(pose, config.keypointConfidenceThreshold)
+        # Save the raw (unsmoothed) pose for rendering before smoothing.
+        # Smoothed coordinates are averaged over N frames and lag behind the
+        # actual position when the climber moves, causing the skeleton to appear
+        # offset from the person in the annotated image.
+        render_frames.append(pose)
 
-        frames.append(pose)
+        smoothed = smoother.smooth(pose)
+        com = compute_center_of_mass(smoothed, config.keypointConfidenceThreshold)
+        metrics = compute_frame_metrics(smoothed, config.keypointConfidenceThreshold)
+
+        frames.append(smoothed)
         coms.append(com)
         all_metrics.append(metrics)
         raw_images.append(fd.image)
@@ -175,7 +182,7 @@ def run(video_path: str, config: AnalysisConfig, output_dir: str = "outputs") ->
 
         annotated = annotate_frame(
             image=raw_images[fi],
-            frame=frames[fi],
+            frame=render_frames[fi],   # raw detection coords match this exact image
             com=com,
             com_trail=com_trail,
             issue=issue_by_frame.get(fi),
