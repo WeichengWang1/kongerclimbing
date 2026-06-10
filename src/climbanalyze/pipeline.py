@@ -151,51 +151,76 @@ def run(video_path: str, config: AnalysisConfig, output_dir: str = "outputs") ->
     # --- Annotation export ---
     annotated_dir = os.path.join(output_dir, "annotated")
     os.makedirs(annotated_dir, exist_ok=True)
-    annotated_paths: list[tuple[str, str]] = []
+    annotated_paths: list[dict] = []
 
     _TRAIL_LEN = 20  # number of consecutive frames to look back for the trail
 
-    # Export up to maxAnnotatedFrames, selecting by issue primary frames
-    frames_to_annotate = _select_annotation_frames(issues, config.maxAnnotatedFrames, len(frames))
+    # For each issue export up to three frames:
+    #   before — 1 second of context before the issue window
+    #   peak   — the primary (most characteristic) frame within the window
+    #   after  — the last reliable frame inside the issue window
+    # Roles that map to the same frame index as peak are skipped.
 
-    issue_by_frame: dict[int, Issue] = {}
+    _BEFORE_OFFSET = 10   # frames to look back for "before" context (~1 s at 10 fps)
+    _MIN_ROLE_GAP = 3     # skip a role if it is within this many frames of peak
+
+    seen_frames: set[int] = set()
+    issue_export_count = 0
+
     for iss in issues:
-        fi = iss.primary_frame_index
-        if fi not in issue_by_frame:
-            issue_by_frame[fi] = iss
-
-    for fi in frames_to_annotate:
-        if fi >= len(frames) or not _HAS_CV2:
+        if issue_export_count >= config.maxAnnotatedFrames or not _HAS_CV2:
             break
-        com = coms[fi]
 
-        # Build trail from the last _TRAIL_LEN consecutive frames ending at fi.
-        # Using consecutive history avoids the jump artifacts that occurred when
-        # trail was accumulated across non-consecutive annotated frames.
-        trail_start = max(0, fi - _TRAIL_LEN)
-        com_trail = [
-            (coms[i].x, coms[i].y)
-            for i in range(trail_start, fi + 1)
-            if coms[i] and coms[i].reliable
-        ]
-
-        annotated = annotate_frame(
-            image=raw_images[fi],
-            frame=render_frames[fi],   # raw detection coords match this exact image
-            com=com,
-            com_trail=com_trail,
-            issue=issue_by_frame.get(fi),
-            conf_threshold=config.keypointConfidenceThreshold,
+        peak_fi = iss.primary_frame_index
+        before_fi = max(0, peak_fi - _BEFORE_OFFSET)
+        # Last reliable frame in the issue window
+        window_end_fi = min(len(frames) - 1, peak_fi + config.analysisWindowFrames - 1)
+        after_fi = next(
+            (i for i in range(window_end_fi, peak_fi, -1) if i < len(frames) and frames[i].reliable),
+            window_end_fi,
         )
 
-        issue = issue_by_frame.get(fi)
-        fname = f"{issue.id}.jpg" if issue else f"frame_{fi:04d}.jpg"
-        fpath = os.path.join(annotated_dir, fname)
-        cv2.imwrite(fpath, annotated)
+        roles: list[tuple[str, int]] = [("peak", peak_fi)]
+        if abs(before_fi - peak_fi) >= _MIN_ROLE_GAP:
+            roles.insert(0, ("before", before_fi))
+        if abs(after_fi - peak_fi) >= _MIN_ROLE_GAP:
+            roles.append(("after", after_fi))
 
-        rel_path = os.path.join("outputs", "annotated", fname)
-        if issue:
-            annotated_paths.append((issue.id, rel_path))
+        for role, fi in roles:
+            if fi >= len(frames):
+                continue
+            if fi in seen_frames and role != "peak":
+                continue  # avoid identical exports for non-peak roles
+
+            com = coms[fi]
+            trail_start = max(0, fi - _TRAIL_LEN)
+            com_trail = [
+                (coms[i].x, coms[i].y)
+                for i in range(trail_start, fi + 1)
+                if coms[i] and coms[i].reliable
+            ]
+
+            # Show issue label only on the peak frame
+            issue_overlay = iss if role == "peak" else None
+
+            annotated = annotate_frame(
+                image=raw_images[fi],
+                frame=render_frames[fi],
+                com=com,
+                com_trail=com_trail,
+                issue=issue_overlay,
+                conf_threshold=config.keypointConfidenceThreshold,
+            )
+
+            fname = f"{iss.id}_{role}.jpg"
+            fpath = os.path.join(annotated_dir, fname)
+            cv2.imwrite(fpath, annotated)
+
+            rel_path = os.path.join("outputs", "annotated", fname)
+            annotated_paths.append({"issueId": iss.id, "frameRole": role, "path": rel_path})
+            seen_frames.add(fi)
+
+        issue_export_count += 1
 
     result = build_result(
         meta, config, frames, coms, all_metrics, issues, annotated_paths, warnings
@@ -220,16 +245,3 @@ def _is_suppressed(candidate: Issue, existing: list[Issue]) -> bool:
     return False
 
 
-def _select_annotation_frames(
-    issues: list[Issue], max_frames: int, total_frames: int
-) -> list[int]:
-    frames: list[int] = []
-    seen: set[int] = set()
-    for iss in issues:
-        fi = iss.primary_frame_index
-        if fi not in seen and fi < total_frames:
-            frames.append(fi)
-            seen.add(fi)
-        if len(frames) >= max_frames:
-            break
-    return frames

@@ -45,10 +45,12 @@ Output is written to `outputs/` by default:
 
 ```
 outputs/
-  analysis.json       # full structured report
+  analysis.json               # full structured report
   annotated/
-    issue_0001.jpg    # annotated frame for each detected issue
-    issue_0002.jpg
+    issue_0001_before.jpg     # context frame ~1 second before issue
+    issue_0001_peak.jpg       # most characteristic frame (issue label shown here)
+    issue_0001_after.jpg      # outcome frame at end of issue window
+    issue_0002_before.jpg
     ...
 ```
 
@@ -119,7 +121,12 @@ Each exported image overlays analysis information on the original video frame:
 
 **Issue label and severity** — the movement problem detected in the window leading up to this frame (`low` / `medium` / `high`), based on how far the measured values exceed the rule thresholds.
 
-**Coaching tip** — a one-sentence actionable suggestion. Intended as a starting point for self-review, not a definitive diagnosis.
+**Coaching tip** — a one-sentence actionable suggestion, chosen from a severity-graded template library. At `low` severity it says "Try…"; at `high` severity it gives more direct corrective instruction. When detection confidence is below 30% the message is prefixed with "Possible:" to indicate uncertainty. Intended as a starting point for self-review, not a definitive diagnosis.
+
+**Frame roles** — each issue exports three frames for context:
+- `_before` — shows what the climber was doing ~1 second before the issue began (no overlay label)
+- `_peak` — the most characteristic frame; the issue label, evidence metrics, and coaching tip are shown here
+- `_after` — the last frame of the issue window, showing how the movement resolved
 
 ## Detected issue types (V1.0)
 

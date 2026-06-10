@@ -4,6 +4,7 @@ import math
 from typing import Optional
 
 from .base import BaseRule, Issue, WindowData, severity_from_m
+from ...export.suggestions import get_issue_texts
 
 
 class LockedElbowRule(BaseRule):
@@ -78,6 +79,9 @@ class LockedElbowRule(BaseRule):
         evidence["postLockComProgress"] = round(com_progress, 4)
 
         avg_conf = self._window_avg_confidence(window)
+        sev = severity_from_m(m_val)
+        issue_conf = avg_conf * m_val
+        msg, rec = get_issue_texts(self.code, sev, issue_conf)
 
         return Issue(
             id="",
@@ -85,10 +89,10 @@ class LockedElbowRule(BaseRule):
             label=self.label,
             start_ms=window.start_ms,
             end_ms=window.end_ms,
-            confidence=avg_conf * m_val,
-            severity=severity_from_m(m_val),
+            confidence=issue_conf,
+            severity=sev,
             primary_frame_index=window.primary_frame_index,
             evidence_metrics=evidence,
-            message="Your arm is nearly straight too early, limiting your ability to continue moving.",
-            recommendation="Keep a slight bend in your elbow and use leg drive to move your body upward.",
+            message=msg,
+            recommendation=rec,
         )

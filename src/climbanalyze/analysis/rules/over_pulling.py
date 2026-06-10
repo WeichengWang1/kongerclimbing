@@ -4,6 +4,7 @@ import math
 from typing import Optional
 
 from .base import BaseRule, Issue, WindowData, severity_from_m
+from ...export.suggestions import get_issue_texts
 
 
 class OverPullingRule(BaseRule):
@@ -56,6 +57,9 @@ class OverPullingRule(BaseRule):
         m = min(1.0, max(0.0, overshoot / full_scale))
 
         avg_conf = self._window_avg_confidence(window)
+        sev = severity_from_m(m)
+        issue_conf = avg_conf * m
+        msg, rec = get_issue_texts(self.code, sev, issue_conf)
 
         return Issue(
             id="",
@@ -63,16 +67,16 @@ class OverPullingRule(BaseRule):
             label=self.label,
             start_ms=window.start_ms,
             end_ms=window.end_ms,
-            confidence=avg_conf * m,
-            severity=severity_from_m(m),
+            confidence=issue_conf,
+            severity=sev,
             primary_frame_index=window.primary_frame_index,
             evidence_metrics={
                 "elbowAngleDeltaDeg": round(elbow_delta, 1),
                 "hipDisplacement": round(hip_disp, 4),
                 "kneeAngleDeltaDeg": round(knee_delta, 1),
             },
-            message="You are pulling hard with your arms while your hips and legs stay still.",
-            recommendation="Drive from your legs and push your hips up before pulling with your arms.",
+            message=msg,
+            recommendation=rec,
         )
 
     def _compute_hip_displacement(self, window: WindowData) -> float:

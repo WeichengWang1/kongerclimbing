@@ -19,7 +19,7 @@ def build_result(
     coms: list[Optional[CenterOfMass]],
     all_metrics: list[FrameMetrics],
     issues: list[Issue],
-    annotated_paths: list[tuple[str, str]],   # [(issue_id, relative_path), ...]
+    annotated_paths: list[dict],  # [{"issueId": ..., "frameRole": ..., "path": ...}, ...]
     warnings: list[str],
 ) -> dict:
     reliable_count = sum(1 for f in frames if f.reliable)
@@ -55,10 +55,7 @@ def build_result(
         "frames": frames_out,
         "issues": [iss.to_dict() for iss in issues],
         "artifacts": {
-            "annotatedFrames": [
-                {"issueId": issue_id, "path": path}
-                for issue_id, path in annotated_paths
-            ]
+            "annotatedFrames": annotated_paths,
         },
     }
 
