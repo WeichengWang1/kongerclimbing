@@ -42,6 +42,9 @@ _COLOR_TEXT_BG = (30, 30, 30)
 
 # Maximum normalized distance between consecutive trail points; larger gaps are skipped.
 _TRAIL_MAX_JUMP = 0.08
+# Minimum normalized segment length to draw a skeleton line.
+# Segments shorter than this are almost always YOLO misprojections (elbow ≈ shoulder).
+_MIN_SEGMENT_LEN = 0.04
 
 
 def annotate_frame(
@@ -64,17 +67,26 @@ def annotate_frame(
 
     kp_map = {kp.name: kp for kp in frame.keypoints if kp.confidence >= conf_threshold}
 
-    # Skeleton lines (nose excluded)
+    # Skeleton lines (nose excluded).
+    # Skip segments that are shorter than _MIN_SEGMENT_LEN: these almost always
+    # indicate YOLO has projected elbow/wrist onto the same pixel as the shoulder.
     for a, b in _SKELETON:
         if a in kp_map and b in kp_map:
-            cv2.line(out, px(kp_map[a].x, kp_map[a].y), px(kp_map[b].x, kp_map[b].y),
-                     _COLOR_SKELETON, 2, cv2.LINE_AA)
+            ka, kb = kp_map[a], kp_map[b]
+            dx, dy = ka.x - kb.x, ka.y - kb.y
+            if (dx * dx + dy * dy) ** 0.5 < _MIN_SEGMENT_LEN:
+                continue
+            cv2.line(out, px(ka.x, ka.y), px(kb.x, kb.y), _COLOR_SKELETON, 2, cv2.LINE_AA)
 
-    # Body keypoints (nose excluded from kp_map loop — handled separately below)
+    # Body keypoints — radius and fill scaled by confidence so unreliable points
+    # are visually distinct (small hollow ring) from reliable ones (solid dot).
     for kp in kp_map.values():
         if kp.name == "nose":
             continue
-        cv2.circle(out, px(kp.x, kp.y), 4, _COLOR_KP, -1, cv2.LINE_AA)
+        if kp.confidence >= conf_threshold * 1.5:   # clearly reliable: solid filled
+            cv2.circle(out, px(kp.x, kp.y), 5, _COLOR_KP, -1, cv2.LINE_AA)
+        else:                                         # marginal confidence: small hollow ring
+            cv2.circle(out, px(kp.x, kp.y), 3, _COLOR_KP, 1, cv2.LINE_AA)
 
     # Nose: only display when confidence clearly indicates face is visible (not occluded).
     # Skipping low-confidence nose avoids the pink artifact dot on the back/chest when the
