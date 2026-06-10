@@ -91,6 +91,36 @@ analysis.json
 
 All coordinates are normalized (0–1 relative to frame size).
 
+## Reading the annotated frames
+
+Each exported image overlays analysis information on the original video frame:
+
+```
+┌─────────────────────────────────────────────────┐
+│ Over-pulling with arms  [medium]                │  ← issue label + severity
+│ Drive from your legs and push your hips up...   │  ← one-line coaching tip
+│                                                 │
+│          ● ──── ●          ← green dots: body keypoints (shoulders,
+│         /|      |\           elbows, wrists, hips, knees, ankles)
+│        / |      | \        ← orange-yellow lines: skeleton connections
+│       ●  ●      ●  ●
+│          |      |
+│       ◎←─┘      │         ← orange-red circle with white ring: current
+│          |      |            center of mass position
+│       ●  ●      ●  ●
+│                            ← blue line: center of mass trail
+│       ╌╌╌╌╌╌╌╌╌            (last ~2 seconds of movement history)
+└─────────────────────────────────────────────────┘
+```
+
+**Blue trail line** — traces where the center of mass has been over the last ~2 seconds leading up to this frame. A smooth upward arc is good. Erratic reversals, sharp zigzags, or a very short trail (little movement) indicate inefficient body control.
+
+**Orange-red CoM dot** — the estimated center of mass at this exact frame, calculated from a weighted average of shoulders (35%), hips (45%), and limbs (20%).
+
+**Issue label and severity** — the movement problem detected in the window leading up to this frame (`low` / `medium` / `high`), based on how far the measured values exceed the rule thresholds.
+
+**Coaching tip** — a one-sentence actionable suggestion. Intended as a starting point for self-review, not a definitive diagnosis.
+
 ## Detected issue types (V1.0)
 
 | Code | Description |

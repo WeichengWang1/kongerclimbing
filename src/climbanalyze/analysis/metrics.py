@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from ..pose.schema import PoseFrame
+from .center_of_mass import CenterOfMass
 
 _Pt = Optional[tuple[float, float]]
 
@@ -18,6 +19,10 @@ class FrameMetrics:
     right_elbow_angle: Optional[float] = None
     left_knee_angle: Optional[float] = None
     right_knee_angle: Optional[float] = None
+    wrist_reach_distance: Optional[float] = None  # normalized dist between wrists
+    # Filled in by pipeline after all frames are processed (requires adjacent CoMs)
+    com_velocity: Optional[float] = None          # normalized units/sec
+    com_direction_change: Optional[bool] = None   # True if velocity reversed vs prev frame
 
     def to_dict(self) -> dict:
         d: dict = {}
@@ -29,11 +34,15 @@ class FrameMetrics:
             "right_elbow_angle": "rightElbowAngle",
             "left_knee_angle": "leftKneeAngle",
             "right_knee_angle": "rightKneeAngle",
+            "wrist_reach_distance": "wristReachDistance",
+            "com_velocity": "comVelocity",
         }
         for attr, json_key in mapping.items():
             val = getattr(self, attr)
             if val is not None:
-                d[json_key] = round(val, 1)
+                d[json_key] = round(val, 4) if isinstance(val, float) else val
+        if self.com_direction_change is not None:
+            d["comDirectionChange"] = self.com_direction_change
         return d
 
 
@@ -78,6 +87,10 @@ def compute_frame_metrics(frame: PoseFrame, conf_threshold: float = 0.0) -> Fram
     sc = ((ls[0] + rs[0]) / 2, (ls[1] + rs[1]) / 2) if ls and rs else None
     hc = ((lh[0] + rh[0]) / 2, (lh[1] + rh[1]) / 2) if lh and rh else None
 
+    wrist_dist = None
+    if lw and rw:
+        wrist_dist = math.sqrt((lw[0] - rw[0]) ** 2 + (lw[1] - rw[1]) ** 2)
+
     return FrameMetrics(
         shoulder_line_angle=_line_angle(ls, rs),
         hip_line_angle=_line_angle(lh, rh),
@@ -86,4 +99,37 @@ def compute_frame_metrics(frame: PoseFrame, conf_threshold: float = 0.0) -> Fram
         right_elbow_angle=_joint_angle(rs, re, rw),
         left_knee_angle=_joint_angle(lh, lk, la),
         right_knee_angle=_joint_angle(rh, rk, ra),
+        wrist_reach_distance=wrist_dist,
     )
+
+
+def fill_com_velocity(
+    all_metrics: list[FrameMetrics],
+    coms: list[Optional[CenterOfMass]],
+    frames_ts_ms: list[int],
+) -> None:
+    """Back-fill comVelocity and comDirectionChange after all frames are processed."""
+    prev_vel: Optional[tuple[float, float]] = None
+
+    for i, m in enumerate(all_metrics):
+        if i == 0 or coms[i] is None or coms[i - 1] is None:
+            continue
+        if not coms[i].reliable or not coms[i - 1].reliable:
+            continue
+
+        dt = (frames_ts_ms[i] - frames_ts_ms[i - 1]) / 1000.0
+        if dt <= 0:
+            continue
+
+        vx = (coms[i].x - coms[i - 1].x) / dt
+        vy = (coms[i].y - coms[i - 1].y) / dt
+        speed = math.sqrt(vx ** 2 + vy ** 2)
+        m.com_velocity = speed
+
+        if prev_vel is not None:
+            dot = prev_vel[0] * vx + prev_vel[1] * vy
+            m.com_direction_change = dot < 0
+        else:
+            m.com_direction_change = False
+
+        prev_vel = (vx, vy)

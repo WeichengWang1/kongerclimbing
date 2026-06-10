@@ -97,12 +97,18 @@ def annotate_frame(
         cv2.circle(out, px(com.x, com.y), 8, _COLOR_COM, -1, cv2.LINE_AA)
         cv2.circle(out, px(com.x, com.y), 8, (255, 255, 255), 2, cv2.LINE_AA)
 
-    # Issue label
+    # Issue label, evidence values, and coaching tip
     if issue:
         label_text = f"{issue.label}  [{issue.severity}]"
+        evidence_text = _format_evidence(issue.evidence_metrics)
         rec_text = issue.recommendation
-        _draw_text_box(out, label_text, (10, 30), scale=0.6)
-        _draw_text_box(out, rec_text, (10, 60), scale=0.45)
+        y = 30
+        _draw_text_box(out, label_text, (10, y), scale=0.6)
+        y += 30
+        if evidence_text:
+            _draw_text_box(out, evidence_text, (10, y), scale=0.42, color=(180, 230, 255))
+            y += 26
+        _draw_text_box(out, rec_text, (10, y), scale=0.42)
 
     return out
 
@@ -122,10 +128,47 @@ def _filter_trail(
     return result
 
 
-def _draw_text_box(img, text: str, origin: tuple[int, int], scale: float = 0.5) -> None:
+def _format_evidence(metrics: dict) -> str:
+    """Turn evidence metrics dict into a compact ASCII string for OpenCV rendering."""
+    # OpenCV putText only supports ASCII — no Unicode (no degree sign, no delta).
+    parts = []
+    labels = {
+        "elbowAngleDeltaDeg": "elbow d",
+        "hipDisplacement": "hip disp",
+        "kneeAngleDeltaDeg": "knee d",
+        "directionChanges": "dir chg",
+        "velocityVariance": "vel var",
+        "ankleJitter": "jitter",
+        "comShiftToSupport": "CoM shift",
+        "leftElbowAngleDeg": "L-elbow",
+        "rightElbowAngleDeg": "R-elbow",
+        "postLockComProgress": "post-lock",
+    }
+    for key, val in metrics.items():
+        label = labels.get(key, key)
+        is_angle = "Deg" in key
+        if isinstance(val, float):
+            if is_angle:
+                parts.append(f"{label}: {val:.1f}deg")
+            elif abs(val) < 0.01:
+                parts.append(f"{label}: {val:.4f}")
+            elif abs(val) < 1:
+                parts.append(f"{label}: {val:.3f}")
+            else:
+                parts.append(f"{label}: {val:.2f}")
+        else:
+            parts.append(f"{label}: {val}")
+    return "  |  ".join(parts)
+
+
+def _draw_text_box(
+    img, text: str, origin: tuple[int, int],
+    scale: float = 0.5,
+    color: tuple = _COLOR_TEXT,
+) -> None:
     font = cv2.FONT_HERSHEY_SIMPLEX
     thickness = 1
     (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
     x, y = origin
     cv2.rectangle(img, (x - 2, y - th - 4), (x + tw + 2, y + 4), _COLOR_TEXT_BG, -1)
-    cv2.putText(img, text, (x, y), font, scale, _COLOR_TEXT, thickness, cv2.LINE_AA)
+    cv2.putText(img, text, (x, y), font, scale, color, thickness, cv2.LINE_AA)

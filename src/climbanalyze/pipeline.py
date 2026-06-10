@@ -16,7 +16,7 @@ from .pose.detector import YoloPoseDetector
 from .pose.smoother import MovingAverageSmoother
 from .pose.schema import PoseFrame
 from .analysis.center_of_mass import CenterOfMass, compute_center_of_mass
-from .analysis.metrics import FrameMetrics, compute_frame_metrics
+from .analysis.metrics import FrameMetrics, compute_frame_metrics, fill_com_velocity
 from .analysis.rules import ALL_RULES, Issue, WindowData
 from .rendering.annotator import annotate_frame
 from .export.json_export import build_result, write_result
@@ -70,6 +70,12 @@ def run(video_path: str, config: AnalysisConfig, output_dir: str = "outputs") ->
 
     detector.close()
 
+    # Back-fill per-frame CoM velocity and direction change (requires full frame list)
+    fill_com_velocity(
+        all_metrics, coms,
+        [f.timestamp_ms for f in frames],
+    )
+
     # --- Exit early if no persons detected ---
     if not frames or all(not f.reliable for f in frames):
         result = build_result(
@@ -88,6 +94,8 @@ def run(video_path: str, config: AnalysisConfig, output_dir: str = "outputs") ->
         )
 
     # --- Sliding-window rule evaluation ---
+    _WARMUP_MS = 1500  # skip issues in the first 1.5 s (climber getting onto wall)
+
     issues: list[Issue] = []
     issue_counter = 0
     window_size = config.analysisWindowFrames
@@ -120,6 +128,9 @@ def run(video_path: str, config: AnalysisConfig, output_dir: str = "outputs") ->
         for rule in rules:
             issue = rule.evaluate(window, config.keypointConfidenceThreshold)
             if issue is None:
+                continue
+            # Skip warmup window
+            if issue.start_ms < _WARMUP_MS:
                 continue
             # Drop issues whose confidence is too low to be actionable
             if issue.confidence < 0.05:
