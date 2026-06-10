@@ -60,10 +60,9 @@ def run(video_path: str, config: AnalysisConfig, output_dir: str = "outputs") ->
         if not pose.keypoints or core_conf < config.frameConfidenceThreshold:
             pose.reliable = False
 
-        # Save the raw (unsmoothed) pose for rendering before smoothing.
-        # Smoothed coordinates are averaged over N frames and lag behind the
-        # actual position when the climber moves, causing the skeleton to appear
-        # offset from the person in the annotated image.
+        # Save the raw (unsmoothed) pose for rendering.
+        # Smoothed coordinates lag behind the actual position when the climber
+        # moves; raw coords match the pixel content of this exact image.
         render_frames.append(pose)
 
         smoothed = smoother.smooth(pose)
