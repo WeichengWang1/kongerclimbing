@@ -20,6 +20,8 @@ from .analysis.metrics import FrameMetrics, compute_frame_metrics, fill_com_velo
 from .analysis.activity import detect_climb_segment
 from .analysis.rules import ALL_RULES, Issue, WindowData
 from .rendering.annotator import annotate_frame
+from .rendering.correction import generate_correction_diagram
+from .rendering.holds import detect_route_holds
 from .export.json_export import build_result, write_result
 
 
@@ -168,16 +170,6 @@ def run(video_path: str, config: AnalysisConfig, output_dir: str = "outputs") ->
 
     _TRAIL_LEN = 20  # number of consecutive frames to look back for the trail
 
-    # For each issue export up to three frames:
-    #   before — 1 second of context before the issue window
-    #   peak   — the primary (most characteristic) frame within the window
-    #   after  — the last reliable frame inside the issue window
-    # Roles that map to the same frame index as peak are skipped.
-
-    _BEFORE_OFFSET = 10   # frames to look back for "before" context (~1 s at 10 fps)
-    _MIN_ROLE_GAP = 3     # skip a role if it is within this many frames of peak
-
-    seen_frames: set[int] = set()
     issue_export_count = 0
 
     for iss in issues:
@@ -185,54 +177,53 @@ def run(video_path: str, config: AnalysisConfig, output_dir: str = "outputs") ->
             break
 
         peak_fi = iss.primary_frame_index
-        # Clamp "before" context to the climb start so it never shows the walk-in.
-        before_fi = max(seg_start, peak_fi - _BEFORE_OFFSET)
-        # Last reliable frame in the issue window
-        window_end_fi = min(len(frames) - 1, peak_fi + config.analysisWindowFrames - 1)
-        after_fi = next(
-            (i for i in range(window_end_fi, peak_fi, -1) if i < len(frames) and frames[i].reliable),
-            window_end_fi,
-        )
 
-        roles: list[tuple[str, int]] = [("peak", peak_fi)]
-        if abs(before_fi - peak_fi) >= _MIN_ROLE_GAP:
-            roles.insert(0, ("before", before_fi))
-        if abs(after_fi - peak_fi) >= _MIN_ROLE_GAP:
-            roles.append(("after", after_fi))
-
-        for role, fi in roles:
-            if fi >= len(frames):
-                continue
-            if fi in seen_frames and role != "peak":
-                continue  # avoid identical exports for non-peak roles
-
-            com = coms[fi]
-            trail_start = max(0, fi - _TRAIL_LEN)
+        # Export annotated peak frame (each issue gets its own unique filename)
+        if peak_fi < len(frames):
+            com = coms[peak_fi]
+            trail_start = max(0, peak_fi - _TRAIL_LEN)
             com_trail = [
                 (coms[i].x, coms[i].y)
-                for i in range(trail_start, fi + 1)
+                for i in range(trail_start, peak_fi + 1)
                 if coms[i] and coms[i].reliable
             ]
-
-            # Show issue label only on the peak frame
-            issue_overlay = iss if role == "peak" else None
-
             annotated = annotate_frame(
-                image=raw_images[fi],
-                frame=render_frames[fi],
+                image=raw_images[peak_fi],
+                frame=render_frames[peak_fi],
                 com=com,
                 com_trail=com_trail,
-                issue=issue_overlay,
+                issue=iss,
                 conf_threshold=config.keypointConfidenceThreshold,
             )
-
-            fname = f"{iss.id}_{role}.jpg"
+            fname = f"{iss.id}_peak.jpg"
             fpath = os.path.join(annotated_dir, fname)
             cv2.imwrite(fpath, annotated)
-
             rel_path = os.path.join("outputs", "annotated", fname)
-            annotated_paths.append({"issueId": iss.id, "frameRole": role, "path": rel_path})
-            seen_frames.add(fi)
+            annotated_paths.append({"issueId": iss.id, "frameRole": "peak", "path": rel_path})
+
+        # Detect all route holds by colour at the peak frame
+        route_holds = detect_route_holds(
+            raw_images[peak_fi],
+            {kp.name: (kp.x, kp.y) if kp.confidence >= config.keypointConfidenceThreshold else None
+             for kp in frames[peak_fi].keypoints},
+        ) if _HAS_CV2 else []
+
+        # Correction diagram: actual vs corrected pose side-by-side
+        corr_fname = f"{iss.id}_correction.jpg"
+        corr_path = os.path.join(annotated_dir, corr_fname)
+        if generate_correction_diagram(
+            frame=frames[peak_fi],
+            com=coms[peak_fi],
+            issue=iss,
+            output_path=corr_path,
+            conf_threshold=config.keypointConfidenceThreshold,
+            route_holds=route_holds,
+        ):
+            annotated_paths.append({
+                "issueId": iss.id,
+                "frameRole": "correction",
+                "path": os.path.join("outputs", "annotated", corr_fname),
+            })
 
         issue_export_count += 1
 

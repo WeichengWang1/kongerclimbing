@@ -69,11 +69,16 @@ video{width:100%;flex:1;min-height:0;background:#000;border-radius:6px;display:b
 .ic-rec{font-size:12px;color:#6af;margin-top:2px;line-height:1.4}
 
 /* --- annotated overlay --- */
-#overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.86);z-index:100;align-items:center;justify-content:center}
+#overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:100;align-items:center;justify-content:center;flex-direction:column;gap:10px}
 #overlay.show{display:flex}
-#overlay img{max-width:88vw;max-height:88vh;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.8)}
-#overlay-close{position:absolute;top:16px;right:20px;font-size:22px;cursor:pointer;color:#bbb;background:rgba(0,0,0,.5);width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;line-height:1}
+#overlay-panel{display:flex;gap:16px;align-items:flex-start;max-width:96vw;max-height:86vh}
+#overlay-left,#overlay-right{display:flex;flex-direction:column;align-items:center;gap:5px;min-width:0}
+.overlay-panel-label{font-size:11px;color:#666;letter-spacing:.06em;text-transform:uppercase;flex-shrink:0}
+#overlay-img{max-height:80vh;max-width:46vw;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.8)}
+#overlay-correction{max-height:80vh;max-width:46vw;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.8)}
+#overlay-close{position:absolute;top:14px;right:18px;font-size:20px;cursor:pointer;color:#bbb;background:rgba(0,0,0,.55);width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;line-height:1;z-index:1}
 #overlay-close:hover{color:#fff}
+#overlay-countdown{font-size:12px;color:#555;padding:3px 12px;background:rgba(0,0,0,.5);border-radius:12px;flex-shrink:0}
 </style>
 </head>
 <body>
@@ -98,22 +103,39 @@ video{width:100%;flex:1;min-height:0;background:#000;border-radius:6px;display:b
 </div>
 <div id="overlay">
   <span id="overlay-close">&#x2715;</span>
-  <img id="overlay-img" src="" alt="">
+  <div id="overlay-panel">
+    <div id="overlay-left">
+      <span class="overlay-panel-label">Detected issue</span>
+      <img id="overlay-img" src="" alt="">
+    </div>
+    <div id="overlay-right" style="display:none">
+      <span class="overlay-panel-label">Correct form</span>
+      <img id="overlay-correction" src="" alt="">
+    </div>
+  </div>
+  <span id="overlay-countdown"></span>
 </div>
 
 <script>
 'use strict';
-const video   = document.getElementById('video');
-const tlWrap  = document.getElementById('tl-wrap');
-const tlProg  = document.getElementById('tl-progress');
-const tlThumb = document.getElementById('tl-thumb');
-const tlLabel = document.getElementById('tl-label');
-const overlay = document.getElementById('overlay');
+const video      = document.getElementById('video');
+const tlWrap     = document.getElementById('tl-wrap');
+const tlProg     = document.getElementById('tl-progress');
+const tlThumb    = document.getElementById('tl-thumb');
+const tlLabel    = document.getElementById('tl-label');
+const overlay    = document.getElementById('overlay');
 const overlayImg = document.getElementById('overlay-img');
+const overlayCorr = document.getElementById('overlay-correction');
+const overlayRight = document.getElementById('overlay-right');
+const countdownEl  = document.getElementById('overlay-countdown');
 
 let data = null;
 let prevTime = 0;
 let activeId = null;
+
+// Auto-resume state — only set when overlay was opened by auto-pause during playback
+let autopaused = false;
+let resumeInterval = null;
 
 function fmt(ms) {
   const s = Math.floor(ms / 1000);
@@ -160,7 +182,7 @@ function buildIssueList() {
       '</div>' +
       '<div class="ic-time">' + fmt(iss.startMs) + ' – ' + fmt(iss.endMs) + '</div>' +
       '<div class="ic-msg">' + esc(iss.message) + '</div>' +
-      '<div class="ic-rec">→ ' + esc(iss.recommendation) + '</div>';
+      '<div class="ic-rec">\\u2192 ' + esc(iss.recommendation) + '</div>';
     card.addEventListener('click', () => jumpTo(iss));
     list.appendChild(card);
   });
@@ -180,15 +202,25 @@ function buildTimeline() {
   });
 }
 
+// Find the annotated frame path for an issue + role
+function findFrame(issId, role) {
+  const af = (data.artifacts.annotatedFrames || [])
+    .find(f => f.issueId === issId && f.frameRole === role);
+  return af ? '/' + af.path.replace(/^\\//, '') : null;
+}
+
 function jumpTo(iss) {
+  // Manual jump — no auto-resume
+  clearResumeTimer();
+  autopaused = false;
   video.currentTime = iss.startMs / 1000;
   prevTime = iss.startMs / 1000;
   video.pause();
   setActive(iss.id);
 
-  const peak = (data.artifacts.annotatedFrames || [])
-    .find(af => af.issueId === iss.id && af.frameRole === 'peak');
-  if (peak) showOverlay('/' + peak.path.replace(/^\\//, ''));
+  const peakSrc = findFrame(iss.id, 'peak');
+  const corrSrc = findFrame(iss.id, 'correction');
+  if (peakSrc) showOverlay(peakSrc, corrSrc, false);
 }
 
 function setActive(id) {
@@ -202,13 +234,55 @@ function setActive(id) {
   }
 }
 
-function showOverlay(src) {
-  overlayImg.src = src;
+// showOverlay(peakSrc, corrSrc, startTimer)
+// startTimer=true only when triggered by auto-pause during playback
+function showOverlay(peakSrc, corrSrc, startTimer) {
+  overlayImg.src = peakSrc;
+  if (corrSrc) {
+    overlayCorr.src = corrSrc;
+    overlayRight.style.display = 'flex';
+  } else {
+    overlayRight.style.display = 'none';
+  }
   overlay.classList.add('show');
+
+  if (startTimer) {
+    autopaused = true;
+    startResumeTimer();
+  }
 }
 
 function hideOverlay() {
+  clearResumeTimer();
   overlay.classList.remove('show');
+  // If the overlay was opened by auto-pause, close also resumes playback
+  if (autopaused) {
+    autopaused = false;
+    video.play();
+  }
+}
+
+function startResumeTimer() {
+  clearResumeTimer();
+  let secs = 10;
+  countdownEl.textContent = 'Resuming in ' + secs + 's';
+  resumeInterval = setInterval(() => {
+    secs -= 1;
+    if (secs > 0) {
+      countdownEl.textContent = 'Resuming in ' + secs + 's';
+    } else {
+      clearResumeTimer();
+      hideOverlay();  // hideOverlay checks autopaused and calls video.play()
+    }
+  }, 1000);
+}
+
+function clearResumeTimer() {
+  if (resumeInterval !== null) {
+    clearInterval(resumeInterval);
+    resumeInterval = null;
+  }
+  countdownEl.textContent = '';
 }
 
 function setupEvents() {
@@ -218,8 +292,10 @@ function setupEvents() {
   video.addEventListener('seeked', () => { prevTime = video.currentTime; });
 
   video.addEventListener('play', () => {
+    clearResumeTimer();
+    autopaused = false;
     prevTime = video.currentTime;
-    hideOverlay();
+    overlay.classList.remove('show');
     setActive(null);
   });
 
@@ -238,9 +314,9 @@ function setupEvents() {
           video.currentTime = t;
           video.pause();
           setActive(iss.id);
-          const peak = (data.artifacts.annotatedFrames || [])
-            .find(af => af.issueId === iss.id && af.frameRole === 'peak');
-          if (peak) showOverlay('/' + peak.path.replace(/^\\//, ''));
+          const peakSrc = findFrame(iss.id, 'peak');
+          const corrSrc = findFrame(iss.id, 'correction');
+          if (peakSrc) showOverlay(peakSrc, corrSrc, true);  // true = start 10s timer
           prevTime = t;
           return;
         }
