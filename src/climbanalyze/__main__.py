@@ -6,6 +6,7 @@ import sys
 
 from .config import AnalysisConfig
 from .pipeline import run
+from .viewer import serve as viewer_serve
 
 
 def main() -> None:
@@ -21,6 +22,14 @@ def main() -> None:
     parser.add_argument(
         "--output-dir", "-o", default="outputs", metavar="DIR",
         help="Directory for analysis.json and annotated frames (default: outputs/).",
+    )
+    parser.add_argument(
+        "--serve", action="store_true",
+        help="After analysis, open the viewer in a browser (port 8742).",
+    )
+    parser.add_argument(
+        "--port", type=int, default=8742,
+        help="Viewer port when --serve is used (default: 8742).",
     )
     args = parser.parse_args()
 
@@ -51,7 +60,12 @@ def main() -> None:
     for w in result.get("warnings", []):
         print(f"Warning: {w}", file=sys.stderr)
 
-    sys.exit(4 if status == "no_person_detected" else 0)
+    exit_code = 4 if status == "no_person_detected" else 0
+
+    if args.serve and exit_code == 0:
+        viewer_serve(args.output_dir, port=args.port)
+
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

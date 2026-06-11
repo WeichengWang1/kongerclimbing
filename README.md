@@ -34,6 +34,12 @@ source .venv/bin/activate
 # Basic analysis
 python -m climbanalyze samples/climb.mp4
 
+# Analyze and immediately open the viewer in a browser
+python -m climbanalyze samples/climb.mp4 --serve
+
+# Open the viewer for a previous analysis (without re-running)
+python -m climbanalyze.viewer outputs/
+
 # Custom output directory
 python -m climbanalyze samples/climb.mp4 --output-dir my_outputs
 
@@ -127,6 +133,25 @@ Each exported image overlays analysis information on the original video frame:
 - `_before` — shows what the climber was doing ~1 second before the issue began (no overlay label)
 - `_peak` — the most characteristic frame; the issue label, evidence metrics, and coaching tip are shown here
 - `_after` — the last frame of the issue window, showing how the movement resolved
+
+## Viewer (V1.2)
+
+```bash
+python -m climbanalyze.viewer outputs/
+# → Viewer: http://localhost:8742  (Ctrl+C to stop)
+```
+
+The browser viewer provides:
+
+- **Video player** — plays the original video with a custom seek bar
+- **Issue timeline** — colored markers at issue timestamps (`low` = teal, `medium` = amber, `high` = red); click any marker to jump
+- **Auto-pause** — playback pauses automatically when it reaches each issue; the annotated peak frame pops up
+- **Issue panel** — right-hand list of all issues with severity badges, timestamps, message, and coaching tip; click to jump to any issue
+
+The `--serve` flag on the main command opens the viewer immediately after analysis:
+```bash
+python -m climbanalyze samples/climb.mp4 --serve
+```
 
 ## Detected issue types (V1.0)
 
