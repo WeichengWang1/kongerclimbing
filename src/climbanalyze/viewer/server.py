@@ -3,6 +3,7 @@ from __future__ import annotations
 import http.server
 import json
 import os
+import sys
 import threading
 import webbrowser
 
@@ -498,7 +499,22 @@ def serve(
         root_dir=os.getcwd(),
     )
 
-    with http.server.ThreadingHTTPServer(("", port), handler_cls) as httpd:
+    # If the requested port is taken (e.g. a previous viewer is still running),
+    # try the next few ports instead of crashing.
+    httpd = None
+    for p in range(port, port + 20):
+        try:
+            httpd = http.server.ThreadingHTTPServer(("", p), handler_cls)
+            port = p
+            break
+        except OSError:
+            continue
+    if httpd is None:
+        print(f"No free port in {port}-{port + 19}. Stop the other viewer or pass --port.",
+              file=sys.stderr)
+        sys.exit(3)
+
+    with httpd:
         url = f"http://localhost:{port}"
         print(f"Viewer: {url}  (Ctrl+C to stop)")
         if open_browser:
