@@ -87,8 +87,8 @@ def detect_climb_segment(
         return None
 
     fps = max(1, target_fps)
-    run_frames = max(3, round(0.8 * fps))   # 0.8 s sustained activity to start
-    gap_frames = max(run_frames, round(1.5 * fps))  # 1.5 s inactivity ends the climb
+    run_frames = max(3, round(0.8 * fps))    # 0.8 s sustained activity to start
+    gap_frames = max(run_frames, round(10 * fps))  # 10 s inactivity ends the climb
 
     active = [_frame_active(frames[i], coms, i) for i in range(n)]
 
