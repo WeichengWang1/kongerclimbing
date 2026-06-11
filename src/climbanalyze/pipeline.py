@@ -17,6 +17,7 @@ from .pose.smoother import MovingAverageSmoother
 from .pose.schema import PoseFrame
 from .analysis.center_of_mass import CenterOfMass, compute_center_of_mass
 from .analysis.metrics import FrameMetrics, compute_frame_metrics, fill_com_velocity
+from .analysis.activity import detect_climb_segment
 from .analysis.rules import ALL_RULES, Issue, WindowData
 from .rendering.annotator import annotate_frame
 from .export.json_export import build_result, write_result
@@ -99,9 +100,21 @@ def run(video_path: str, config: AnalysisConfig, output_dir: str = "outputs") ->
             "Analysis results may be less accurate."
         )
 
-    # --- Sliding-window rule evaluation ---
-    _WARMUP_MS = 1500  # skip issues in the first 1.5 s (climber getting onto wall)
+    # --- Restrict analysis to the active climbing segment ---
+    # The clip usually opens with the climber walking toward the wall and ends
+    # with them stepping off; analyzing those frames produces false issues.
+    segment = detect_climb_segment(frames, coms, config.targetFps)
+    if segment is None:
+        # No sustained climbing detected — analyze the whole clip but flag it.
+        seg_start, seg_end = 0, len(frames) - 1
+        warnings.append(
+            "Climbing segment not detected; analyzing the entire clip. "
+            "Issues before/after the actual climb may be inaccurate."
+        )
+    else:
+        seg_start, seg_end = segment
 
+    # --- Sliding-window rule evaluation (within the climb segment only) ---
     issues: list[Issue] = []
     issue_counter = 0
     window_size = config.analysisWindowFrames
@@ -113,6 +126,9 @@ def run(video_path: str, config: AnalysisConfig, output_dir: str = "outputs") ->
 
     for start in range(len(frames) - window_size + 1):
         end = start + window_size
+        # Only evaluate windows fully inside the detected climbing segment.
+        if start < seg_start or (end - 1) > seg_end:
+            continue
         w_frames = frames[start:end]
         w_coms = coms[start:end]
         w_metrics = all_metrics[start:end]
@@ -134,9 +150,6 @@ def run(video_path: str, config: AnalysisConfig, output_dir: str = "outputs") ->
         for rule in rules:
             issue = rule.evaluate(window, config.keypointConfidenceThreshold)
             if issue is None:
-                continue
-            # Skip warmup window
-            if issue.start_ms < _WARMUP_MS:
                 continue
             # Drop issues whose confidence is too low to be actionable
             if issue.confidence < 0.05:
@@ -172,7 +185,8 @@ def run(video_path: str, config: AnalysisConfig, output_dir: str = "outputs") ->
             break
 
         peak_fi = iss.primary_frame_index
-        before_fi = max(0, peak_fi - _BEFORE_OFFSET)
+        # Clamp "before" context to the climb start so it never shows the walk-in.
+        before_fi = max(seg_start, peak_fi - _BEFORE_OFFSET)
         # Last reliable frame in the issue window
         window_end_fi = min(len(frames) - 1, peak_fi + config.analysisWindowFrames - 1)
         after_fi = next(

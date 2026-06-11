@@ -109,18 +109,28 @@ def annotate_frame(
         cv2.circle(out, px(com.x, com.y), 8, _COLOR_COM, -1, cv2.LINE_AA)
         cv2.circle(out, px(com.x, com.y), 8, (255, 255, 255), 2, cv2.LINE_AA)
 
-    # Issue label, evidence values, and coaching tip
+    # Issue label, evidence values, and coaching tip.
+    # Font size and stroke scale with resolution so text stays legible on 1080p/4K
+    # frames (fixed sizes looked tiny on high-res video). Long lines are wrapped so
+    # the larger text never runs off the right edge.
     if issue:
-        label_text = f"{issue.label}  [{issue.severity}]"
+        fs = max(max(h, w) / 1280.0, 1.0)   # 1.0 at 1280px, ~1.5 at 1080p, ~3.0 at 4K
+        label_scale = 0.9 * fs
+        body_scale = 0.62 * fs
+        thickness = max(2, round(1.5 * fs))
+        margin = int(14 * fs)
+        line_gap = int(8 * fs)
+        max_text_w = w - 2 * margin
+        y = int(42 * fs)
+
+        y = _draw_paragraph(out, f"{issue.label}  [{issue.severity}]", margin, y,
+                            label_scale, thickness, max_text_w, line_gap, _COLOR_TEXT)
         evidence_text = _format_evidence(issue.evidence_metrics)
-        rec_text = issue.recommendation
-        y = 30
-        _draw_text_box(out, label_text, (10, y), scale=0.6)
-        y += 30
         if evidence_text:
-            _draw_text_box(out, evidence_text, (10, y), scale=0.42, color=(180, 230, 255))
-            y += 26
-        _draw_text_box(out, rec_text, (10, y), scale=0.42)
+            y = _draw_paragraph(out, evidence_text, margin, y, body_scale, thickness,
+                                max_text_w, line_gap, (180, 230, 255))
+        _draw_paragraph(out, issue.recommendation, margin, y, body_scale, thickness,
+                        max_text_w, line_gap, _COLOR_TEXT)
 
     return out
 
@@ -173,14 +183,43 @@ def _format_evidence(metrics: dict) -> str:
     return "  |  ".join(parts)
 
 
-def _draw_text_box(
-    img, text: str, origin: tuple[int, int],
-    scale: float = 0.5,
-    color: tuple = _COLOR_TEXT,
-) -> None:
+def _wrap_text(
+    text: str, scale: float, thickness: int, max_width: int
+) -> list[str]:
+    """Greedy word-wrap *text* so each line fits within *max_width* pixels."""
     font = cv2.FONT_HERSHEY_SIMPLEX
-    thickness = 1
-    (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
-    x, y = origin
-    cv2.rectangle(img, (x - 2, y - th - 4), (x + tw + 2, y + 4), _COLOR_TEXT_BG, -1)
-    cv2.putText(img, text, (x, y), font, scale, color, thickness, cv2.LINE_AA)
+    lines: list[str] = []
+    current = ""
+    for word in text.split():
+        trial = word if not current else f"{current} {word}"
+        (tw, _), _ = cv2.getTextSize(trial, font, scale, thickness)
+        if tw <= max_width or not current:
+            current = trial
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
+
+
+def _draw_paragraph(
+    img, text: str, x: int, y: int,
+    scale: float, thickness: int, max_width: int, line_gap: int,
+    color: tuple = _COLOR_TEXT,
+) -> int:
+    """Draw *text* (word-wrapped) with a dark background box per line.
+
+    Returns the y coordinate just below the drawn block, ready for the next paragraph.
+    """
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    pad = max(3, thickness + 2)
+    for line in _wrap_text(text, scale, thickness, max_width):
+        (tw, th), baseline = cv2.getTextSize(line, font, scale, thickness)
+        cv2.rectangle(
+            img, (x - pad, y - th - pad), (x + tw + pad, y + baseline + pad),
+            _COLOR_TEXT_BG, -1,
+        )
+        cv2.putText(img, line, (x, y), font, scale, color, thickness, cv2.LINE_AA)
+        y += th + baseline + pad + line_gap
+    return y
