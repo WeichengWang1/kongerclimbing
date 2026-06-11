@@ -19,7 +19,6 @@ from typing import Optional
 from ..analysis.center_of_mass import CenterOfMass
 from ..analysis.rules.base import Issue
 from ..pose.schema import PoseFrame
-from .repose import repose_person
 
 try:
     import cv2
@@ -389,11 +388,10 @@ def _place_and_overlay(canvas, src_img, crop, panel, kps, w, h, skel_color, kp_c
 
 
 def _render_real_diagram(image, kps, corrected, issue: Issue, route_holds) -> Optional["np.ndarray"]:
-    """Real climber (left) vs re-posed real climber (right), each with skeleton."""
+    """Real climber on both panels; left overlays the detected skeleton, right
+    overlays the corrected skeleton. The real pixels are NOT re-posed — only the
+    skeleton differs, so the comparison stays clean and artifact-free."""
     h, w = image.shape[:2]
-    reposed = repose_person(image, kps, corrected)
-    if reposed is None:
-        return None
 
     # Shared crop covering both actual and corrected joints → identical scale.
     pts = [v for v in kps.values() if v is not None] + [v for v in corrected.values() if v is not None]
@@ -417,7 +415,7 @@ def _render_real_diagram(image, kps, corrected, issue: Issue, route_holds) -> Op
     right_panel = (458, 58, _W - 18, _H - 42)
     _place_and_overlay(canvas, image, crop, left_panel, kps, w, h,
                        _GRAY_SKEL, (0, 220, 255), route_holds)
-    _place_and_overlay(canvas, reposed, crop, right_panel, corrected, w, h,
+    _place_and_overlay(canvas, image, crop, right_panel, corrected, w, h,
                        _GREEN, _GREEN, route_holds)
 
     tip = _TIPS.get(issue.code, "Focus on body positioning and balance")
