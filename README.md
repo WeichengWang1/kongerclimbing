@@ -37,8 +37,14 @@ python -m climbanalyze samples/climb.mp4
 # Analyze and immediately open the viewer in a browser
 python -m climbanalyze samples/climb.mp4 --serve
 
+# Analyze, open viewer on a custom port
+python -m climbanalyze samples/climb.mp4 --serve --port 9000
+
 # Open the viewer for a previous analysis (without re-running)
 python -m climbanalyze.viewer outputs/
+
+# Viewer with a custom port, no auto-open
+python -m climbanalyze.viewer outputs/ --port 9000 --no-browser
 
 # Custom output directory
 python -m climbanalyze samples/climb.mp4 --output-dir my_outputs
@@ -137,8 +143,15 @@ Each exported image overlays analysis information on the original video frame:
 ## Viewer (V1.2)
 
 ```bash
+# Serve the most recent analysis
 python -m climbanalyze.viewer outputs/
 # → Viewer: http://localhost:8742  (Ctrl+C to stop)
+
+# Custom port
+python -m climbanalyze.viewer outputs/ --port 9000
+
+# Start server without opening a browser tab
+python -m climbanalyze.viewer outputs/ --no-browser
 ```
 
 The browser viewer provides:
@@ -148,9 +161,10 @@ The browser viewer provides:
 - **Auto-pause** — playback pauses automatically when it reaches each issue; the annotated peak frame pops up
 - **Issue panel** — right-hand list of all issues with severity badges, timestamps, message, and coaching tip; click to jump to any issue
 
-The `--serve` flag on the main command opens the viewer immediately after analysis:
+The `--serve` flag on the main command opens the viewer immediately after analysis completes:
 ```bash
 python -m climbanalyze samples/climb.mp4 --serve
+python -m climbanalyze samples/climb.mp4 --serve --port 9000
 ```
 
 ## Detected issue types (V1.0)
