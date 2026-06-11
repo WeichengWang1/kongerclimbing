@@ -19,6 +19,7 @@ from typing import Optional
 from ..analysis.center_of_mass import CenterOfMass
 from ..analysis.rules.base import Issue
 from ..pose.schema import PoseFrame
+from .repose import repose_person
 
 try:
     import cv2
@@ -334,6 +335,98 @@ def _draw_route_holds(
             cv2.line(img, (px, py - 4), (px, py + 4), _ROUTE_HOLD, 1, cv2.LINE_AA)
 
 
+def _bbox_px(points_norm: list[tuple], w: int, h: int, pad: float = 0.25) -> tuple:
+    xs = [p[0] * w for p in points_norm]
+    ys = [p[1] * h for p in points_norm]
+    sx = max(max(xs) - min(xs), 0.05 * w)
+    sy = max(max(ys) - min(ys), 0.05 * h)
+    x0 = max(0, int(min(xs) - sx * pad))
+    y0 = max(0, int(min(ys) - sy * pad))
+    x1 = min(w, int(max(xs) + sx * pad))
+    y1 = min(h, int(max(ys) + sy * pad))
+    return x0, y0, x1, y1
+
+
+def _place_and_overlay(canvas, src_img, crop, panel, kps, w, h, skel_color, kp_color, route_holds):
+    """Resize *src_img[crop]* into *panel*, then overlay skeleton + holds.
+
+    Returns nothing; draws onto *canvas*. Same crop+panel on both sides keeps the
+    two climbers at an identical scale ("比例协调").
+    """
+    x0, y0, x1, y1 = crop
+    px0, py0, px1, py1 = panel
+    cw, ch = max(1, x1 - x0), max(1, y1 - y0)
+    pw, ph = px1 - px0, py1 - py0
+    s = min(pw / cw, ph / ch)
+    dw, dh = max(1, int(cw * s)), max(1, int(ch * s))
+    sub = cv2.resize(src_img[y0:y1, x0:x1], (dw, dh), interpolation=cv2.INTER_AREA)
+    ox, oy = px0 + (pw - dw) // 2, py0 + (ph - dh) // 2
+    canvas[oy:oy + dh, ox:ox + dw] = sub
+
+    def to_px(nx, ny):
+        return (int(ox + (nx * w - x0) * s), int(oy + (ny * h - y0) * s))
+
+    if route_holds:
+        for hx, hy in route_holds:
+            p = to_px(hx, hy)
+            if px0 <= p[0] <= px1 and py0 <= p[1] <= py1:
+                cv2.circle(canvas, p, 6, _ROUTE_HOLD, 1, cv2.LINE_AA)
+
+    for a, b in _SKELETON_PAIRS:
+        pa, pb = kps.get(a), kps.get(b)
+        if pa and pb:
+            cv2.line(canvas, to_px(*pa), to_px(*pb), skel_color, 2, cv2.LINE_AA)
+    for name, pos in kps.items():
+        if pos is None or name == "nose":
+            continue
+        p = to_px(*pos)
+        if name in _HOLD_JOINTS:
+            c = _HAND_HOLD if "wrist" in name else _FOOT_HOLD
+            cv2.circle(canvas, p, 6, c, -1, cv2.LINE_AA)
+            cv2.circle(canvas, p, 6, (255, 255, 255), 1, cv2.LINE_AA)
+        else:
+            cv2.circle(canvas, p, 4, kp_color, -1, cv2.LINE_AA)
+
+
+def _render_real_diagram(image, kps, corrected, issue: Issue, route_holds) -> Optional["np.ndarray"]:
+    """Real climber (left) vs re-posed real climber (right), each with skeleton."""
+    h, w = image.shape[:2]
+    reposed = repose_person(image, kps, corrected)
+    if reposed is None:
+        return None
+
+    # Shared crop covering both actual and corrected joints → identical scale.
+    pts = [v for v in kps.values() if v is not None] + [v for v in corrected.values() if v is not None]
+    if route_holds:
+        for hx, hy in route_holds:
+            if any(((hx - p[0]) ** 2 + (hy - p[1]) ** 2) ** 0.5 <= 0.2 for p in pts):
+                pts.append((hx, hy))
+    crop = _bbox_px(pts, w, h)
+
+    canvas = np.full((_H, _W, 3), _BG, dtype=np.uint8)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+
+    label = issue.label[:44]
+    (tw, _), _ = cv2.getTextSize(label, font, 0.58, 1)
+    cv2.putText(canvas, label, ((_W - tw) // 2, 22), font, 0.58, _TEXT_MAIN, 1, cv2.LINE_AA)
+    cv2.putText(canvas, "ACTUAL", (28, 42), font, 0.48, _TEXT_DIM, 1, cv2.LINE_AA)
+    cv2.putText(canvas, "CORRECTED", (462, 42), font, 0.48, _GREEN, 1, cv2.LINE_AA)
+    cv2.line(canvas, (0, 52), (_W, 52), (42, 42, 42), 1)
+
+    left_panel = (18, 58, 440, _H - 42)
+    right_panel = (458, 58, _W - 18, _H - 42)
+    _place_and_overlay(canvas, image, crop, left_panel, kps, w, h,
+                       _GRAY_SKEL, (0, 220, 255), route_holds)
+    _place_and_overlay(canvas, reposed, crop, right_panel, corrected, w, h,
+                       _GREEN, _GREEN, route_holds)
+
+    tip = _TIPS.get(issue.code, "Focus on body positioning and balance")
+    (tw, _), _ = cv2.getTextSize(tip, font, 0.42, 1)
+    cv2.putText(canvas, tip[:90], ((_W - min(tw, _W - 40)) // 2, _H - 14),
+                font, 0.42, _ACCENT, 1, cv2.LINE_AA)
+    return canvas
+
+
 def generate_correction_diagram(
     frame: PoseFrame,
     com: Optional[CenterOfMass],
@@ -341,8 +434,14 @@ def generate_correction_diagram(
     output_path: str,
     conf_threshold: float = 0.3,
     route_holds: Optional[list] = None,
+    image=None,
 ) -> bool:
     """Render and save an actual-vs-corrected pose diagram.
+
+    When *image* (the real BGR frame) is provided, both panels show the real
+    climber with a skeleton overlay; the corrected panel re-poses the climber's
+    real pixels per-bone (proportions preserved). Falls back to a skeleton-only
+    diagram when the image is missing or reposing fails.
 
     Returns True if the image was written, False if skipped (missing deps,
     too few keypoints, or write error).
@@ -356,6 +455,17 @@ def generate_correction_diagram(
         return False
 
     corrected = _apply_correction(kps, issue.code)
+
+    if image is not None:
+        canvas = _render_real_diagram(image, kps, corrected, issue, route_holds)
+        if canvas is not None:
+            try:
+                os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+                cv2.imwrite(output_path, canvas)
+                return True
+            except Exception:
+                return False
+        # else: fall through to the skeleton-only diagram below.
 
     # Bounding box: actual keypoints + any route hold within 0.25 of the climber.
     # Using only actual keypoints (not corrected) keeps a stable scale so the

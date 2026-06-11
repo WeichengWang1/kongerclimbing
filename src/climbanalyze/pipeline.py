@@ -213,12 +213,13 @@ def run(video_path: str, config: AnalysisConfig, output_dir: str = "outputs") ->
         corr_fname = f"{iss.id}_correction.jpg"
         corr_path = os.path.join(annotated_dir, corr_fname)
         if generate_correction_diagram(
-            frame=frames[peak_fi],
+            frame=render_frames[peak_fi],   # raw coords match the real pixels for reposing
             com=coms[peak_fi],
             issue=iss,
             output_path=corr_path,
             conf_threshold=config.keypointConfidenceThreshold,
             route_holds=route_holds,
+            image=raw_images[peak_fi],
         ):
             annotated_paths.append({
                 "issueId": iss.id,
