@@ -21,6 +21,7 @@ def build_result(
     issues: list[Issue],
     annotated_paths: list[dict],  # [{"issueId": ..., "frameRole": ..., "path": ...}, ...]
     warnings: list[str],
+    annotated_video: Optional[str] = None,  # relative path to the skeleton-overlay video
 ) -> dict:
     reliable_count = sum(1 for f in frames if f.reliable)
     total = len(frames)
@@ -56,6 +57,7 @@ def build_result(
         "issues": [iss.to_dict() for iss in issues],
         "artifacts": {
             "annotatedFrames": annotated_paths,
+            "annotatedVideo": annotated_video,
         },
     }
 

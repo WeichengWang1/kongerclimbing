@@ -22,6 +22,7 @@ from .analysis.rules import ALL_RULES, Issue, WindowData
 from .rendering.annotator import annotate_frame
 from .rendering.correction import generate_correction_diagram
 from .rendering.holds import detect_route_holds
+from .rendering.video_overlay import write_annotated_video
 from .export.json_export import build_result, write_result
 
 
@@ -227,8 +228,27 @@ def run(video_path: str, config: AnalysisConfig, output_dir: str = "outputs") ->
 
         issue_export_count += 1
 
+    # --- Full annotated playback video (skeleton/CoM on every frame) ---
+    # The viewer plays this so the skeleton stays attached during playback.
+    annotated_video_rel: Optional[str] = None
+    if _HAS_CV2 and raw_images:
+        video_abs = os.path.join(output_dir, "annotated.mp4")
+        if write_annotated_video(
+            raw_images=raw_images,
+            render_frames=render_frames,
+            coms=coms,
+            fps=config.targetFps,
+            out_path=video_abs,
+            conf_threshold=config.keypointConfidenceThreshold,
+            issues=issues,
+        ):
+            annotated_video_rel = os.path.join("outputs", "annotated.mp4")
+        else:
+            warnings.append("Annotated video encoding failed; viewer will use the raw clip.")
+
     result = build_result(
-        meta, config, frames, coms, all_metrics, issues, annotated_paths, warnings
+        meta, config, frames, coms, all_metrics, issues, annotated_paths, warnings,
+        annotated_video=annotated_video_rel,
     )
     write_result(result, output_dir)
     return result

@@ -156,7 +156,9 @@ async function init() {
     src.width + '\\xd7' + src.height + '\\u2002' + src.fps + 'fps\\u2002' +
     (src.durationMs / 1000).toFixed(1) + 's\\u2002\\u00b7\\u2002' + data.issues.length + ' issues';
 
-  video.src = '/video';
+  // Prefer the skeleton-overlay video so the skeleton stays attached during
+  // playback; fall back to the raw clip when encoding was unavailable.
+  video.src = (data.artifacts && data.artifacts.annotatedVideo) ? '/annotated_video' : '/video';
   document.getElementById('issue-count').textContent = '(' + data.issues.length + ')';
 
   buildIssueList();
@@ -360,19 +362,33 @@ def _make_handler(output_dir: str, video_path: str, root_dir: str):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=root_dir, **kwargs)
 
+        def _annotated_video_path(self):
+            p = os.path.join(self._output_dir, "annotated.mp4")
+            return p if os.path.isfile(p) else None
+
         def do_GET(self):
             if self.path in ("/", "/index.html"):
                 self._serve_html()
             elif self.path == "/api/analysis":
                 self._serve_json()
             elif self.path == "/video":
-                self._serve_video()
+                self._serve_video(self._video_path)
+            elif self.path == "/annotated_video":
+                ann = self._annotated_video_path()
+                if ann:
+                    self._serve_video(ann)
+                else:
+                    self.send_error(404, "No annotated video")
             else:
                 super().do_GET()
 
         def do_HEAD(self):
-            if self.path == "/video":
-                path = self._video_path
+            if self.path in ("/video", "/annotated_video"):
+                path = self._annotated_video_path() if self.path == "/annotated_video" \
+                    else self._video_path
+                if not path:
+                    self.send_error(404, "Video not found")
+                    return
                 try:
                     file_size = os.path.getsize(path)
                 except OSError:
@@ -386,8 +402,7 @@ def _make_handler(output_dir: str, video_path: str, root_dir: str):
             else:
                 super().do_HEAD()
 
-        def _serve_video(self):
-            path = self._video_path
+        def _serve_video(self, path):
             try:
                 file_size = os.path.getsize(path)
             except OSError:
